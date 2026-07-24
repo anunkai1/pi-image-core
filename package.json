@@ -1,0 +1,29 @@
+{
+  "name": "pi-image-core",
+  "version": "0.1.0",
+  "description": "Shared core for the pi-*-image extensions: upload persistence, the unified image-model override file + source tagging, retrying image-API fetch, model resolution, the per-backend model catalogs, and provider auth/key resolution. Extracted from pi-venice-image / pi-openrouter-image / pi-openai-codex-image / pi-local-image so the four extensions stop copy-pasting (and pi-local-image stops mirroring) the same plumbing.",
+  "keywords": ["pi-package", "image-generation"],
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./persist": "./src/persist.ts",
+    "./override": "./src/override.ts",
+    "./resolve": "./src/resolve.ts",
+    "./retry": "./src/retry.ts",
+    "./catalogs": "./src/catalogs.ts",
+    "./auth": "./src/auth.ts",
+    "./util": "./src/util.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.9"
+  }
+}
