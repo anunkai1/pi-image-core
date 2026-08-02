@@ -22,6 +22,7 @@ import {
 let tmpHome: string;
 const origHome = process.env.HOME;
 const origUploads = process.env.ACB_UPLOADS_DIR;
+const origMaxImageBytes = process.env.PI_IMAGE_MAX_BYTES;
 
 beforeEach(async () => {
 	tmpHome = await mkdtemp(join(tmpdir(), "pi-image-core-home-"));
@@ -33,6 +34,8 @@ afterEach(async () => {
 	process.env.HOME = origHome;
 	if (origUploads === undefined) delete process.env.ACB_UPLOADS_DIR;
 	else process.env.ACB_UPLOADS_DIR = origUploads;
+	if (origMaxImageBytes === undefined) delete process.env.PI_IMAGE_MAX_BYTES;
+	else process.env.PI_IMAGE_MAX_BYTES = origMaxImageBytes;
 	await rm(tmpHome, { recursive: true, force: true });
 });
 
@@ -53,26 +56,33 @@ describe("resolveFormat", () => {
 describe("writeBase64 + persistImage", () => {
 	it("writes a base64 string to a /uploads/<uuid>.png url", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "out-"));
-		const url = writeBase64("aGVsbG8=", dir, "png"); // "hello"
+		const url = await writeBase64("aGVsbG8=", dir, "png"); // "hello"
 		expect(url).toMatch(/^\/uploads\/[0-9a-f-]{36}\.png$/);
 		await rm(dir, { recursive: true, force: true });
 	});
 	it("strips a data: prefix", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "out-"));
-		const url = writeBase64("data:image/png;base64,aGVsbG8=", dir, "png");
+		const url = await writeBase64("data:image/png;base64,aGVsbG8=", dir, "png");
 		expect(url).toMatch(/^\/uploads\//);
 		await rm(dir, { recursive: true, force: true });
 	});
-	it("returns null on empty/undecodable input", () => {
-		expect(writeBase64("", "/tmp", "png")).toBeNull();
-		expect(writeBase64("!!!notbase64!!!", "/tmp", "png")).not.toBeNull(); // decodes to junk bytes, not null
+	it("returns null on empty/undecodable input", async () => {
+		expect(await writeBase64("", "/tmp", "png")).toBeNull();
+		expect(await writeBase64("!!!notbase64!!!", "/tmp", "png")).toBeNull();
 	});
 	it("persistImage handles {data} objects and bare strings", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "out-"));
-		expect(persistImage({ data: "aGVsbG8=" }, dir, "png")).toMatch(/^\/uploads\//);
-		expect(persistImage("aGVsbG8=", dir, "png")).toMatch(/^\/uploads\//);
-		expect(persistImage({}, dir, "png")).toBeNull();
-		expect(persistImage(null, dir, "png")).toBeNull();
+		expect(await persistImage({ data: "aGVsbG8=" }, dir, "png")).toMatch(/^\/uploads\//);
+		expect(await persistImage("aGVsbG8=", dir, "png")).toMatch(/^\/uploads\//);
+		expect(await persistImage({}, dir, "png")).toBeNull();
+		expect(await persistImage(null, dir, "png")).toBeNull();
+		await rm(dir, { recursive: true, force: true });
+	});
+	it("rejects decoded images above the configured byte limit before writing", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "out-"));
+		process.env.PI_IMAGE_MAX_BYTES = "4";
+		await expect(writeBase64("aGVsbG8=", dir, "png")).rejects.toThrow(/PI_IMAGE_MAX_BYTES/);
+		expect(await import("node:fs/promises").then(({ readdir }) => readdir(dir))).toEqual([]);
 		await rm(dir, { recursive: true, force: true });
 	});
 });

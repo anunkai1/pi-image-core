@@ -6,7 +6,16 @@
  * / systemd restarts are picked up.
  */
 
-import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { mkdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -89,29 +98,44 @@ export function getOpenAICodexAuthSync(): OpenAICodexAuth | undefined {
  * configured.
  */
 export async function getOpenAICodexAuth(): Promise<OpenAICodexAuth | undefined> {
-	const auth = readAuthFile();
+	const initial = codexEntry(readAuthFile());
+	if (!initial) return undefined;
+	if (!initial.refresh || (initial.expires ?? 0) > Date.now() + 60_000) return initial;
+
+	// Refresh tokens rotate. Serialize the re-check + network refresh + merge
+	// across every pi process using the same auth store, not merely this Node
+	// instance. The second waiter observes the first waiter's fresh token and
+	// avoids issuing a now-invalid duplicate refresh.
+	return withAuthFileLock(async () => {
+		const latest = codexEntry(readAuthFile());
+		if (!latest) return undefined;
+		if (!latest.refresh || (latest.expires ?? 0) > Date.now() + 60_000) return latest;
+
+		const refreshed = await refreshOpenAICodexAuth(latest.refresh);
+		// Re-read immediately before persistence and replace only openai-codex,
+		// preserving provider keys another process may have added during fetch.
+		const currentAuth = readAuthFile();
+		if (!currentAuth) return { ...latest, ...refreshed };
+		const currentEntry = currentAuth["openai-codex"] as Record<string, unknown> | undefined;
+		currentAuth["openai-codex"] = { ...currentEntry, ...refreshed };
+		writeAuthFile(currentAuth);
+		return {
+			access: refreshed.access,
+			refresh: refreshed.refresh,
+			expires: refreshed.expires,
+			accountId: latest.accountId,
+		};
+	});
+}
+
+function codexEntry(auth: Record<string, unknown> | null): OpenAICodexAuth | undefined {
 	const entry = auth?.["openai-codex"] as Record<string, unknown> | undefined;
 	if (!entry || typeof entry.access !== "string" || entry.access.length === 0) return undefined;
-	const out: OpenAICodexAuth = {
+	return {
 		access: entry.access,
 		refresh: typeof entry.refresh === "string" ? entry.refresh : undefined,
 		expires: typeof entry.expires === "number" ? entry.expires : undefined,
 		accountId: typeof entry.accountId === "string" ? entry.accountId : undefined,
-	};
-	const expires = out.expires ?? 0;
-	if (!out.refresh || expires > Date.now() + 60_000) return out;
-
-	const refreshed = await refreshOpenAICodexAuth(out.refresh);
-	const nextEntry = { ...entry, ...refreshed };
-	if (auth) {
-		auth["openai-codex"] = nextEntry;
-		writeAuthFile(auth);
-	}
-	return {
-		access: refreshed.access,
-		refresh: refreshed.refresh,
-		expires: refreshed.expires,
-		accountId: out.accountId,
 	};
 }
 
@@ -125,15 +149,52 @@ function readAuthFile(): Record<string, unknown> | null {
 	}
 }
 
+const AUTH_LOCK_STALE_MS = 2 * 60_000;
+const AUTH_LOCK_WAIT_MS = 30_000;
+
+async function withAuthFileLock<T>(fn: () => Promise<T>): Promise<T> {
+	const target = realpathSync(authFilePath());
+	const lockDir = `${target}.refresh-lock`;
+	const deadline = Date.now() + AUTH_LOCK_WAIT_MS;
+	while (true) {
+		try {
+			await mkdir(lockDir, { mode: 0o700 });
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			try {
+				const age = Date.now() - (await stat(lockDir)).mtimeMs;
+				if (age > AUTH_LOCK_STALE_MS) {
+					await rm(lockDir, { recursive: true, force: true });
+					continue;
+				}
+			} catch {
+				continue;
+			}
+			if (Date.now() >= deadline) throw new Error("timed out waiting for auth refresh lock");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+	}
+	try {
+		return await fn();
+	} finally {
+		await rm(lockDir, { recursive: true, force: true });
+	}
+}
+
 function writeAuthFile(auth: Record<string, unknown>): void {
 	// auth.json is a symlink into the central secrets store on server2. Resolve
 	// it before atomic replacement so token refresh never replaces that symlink
 	// with a local, accidentally less-protected copy.
 	const file = realpathSync(authFilePath());
 	mkdirSync(dirname(file), { recursive: true });
-	const tmp = `${file}.tmp`;
-	writeFileSync(tmp, `${JSON.stringify(auth, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-	renameSync(tmp, file);
+	const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+	try {
+		writeFileSync(tmp, `${JSON.stringify(auth, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+		renameSync(tmp, file);
+	} finally {
+		rmSync(tmp, { force: true });
+	}
 }
 
 async function refreshOpenAICodexAuth(

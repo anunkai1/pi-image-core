@@ -2,8 +2,8 @@
  * Small format/conversion helpers shared across the image backends.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { resolveOutputDir, OUTPUT_URL_PREFIX } from "./persist.js";
+import { readFile, stat } from "node:fs/promises";
+import { maxImageBytes, resolveOutputDir, OUTPUT_URL_PREFIX } from "./persist.js";
 
 /**
  * Format a USD cost as a short string ($0.034 → "$0.034", $0 → "free",
@@ -60,10 +60,24 @@ export function sniffMimeType(path: string): string {
  *      call) → read from disk, base64, wrap as a data URL.
  * Returns `{ url }` on success or `{ error }` if the path is unreadable.
  */
-export function resolveInputImageUrl(input: string): { url: string } | { error: string } {
+export async function resolveInputImageUrl(
+	input: string,
+): Promise<{ url: string } | { error: string }> {
 	const s = input.trim();
 	if (s.length === 0) return { error: "empty input_image" };
-	if (s.startsWith("data:") || /^https?:\/\//i.test(s)) return { url: s };
+	if (s.startsWith("data:")) {
+		const comma = s.indexOf(",");
+		if (comma < 0 || !/;base64$/i.test(s.slice(0, comma))) {
+			return { error: "input_image data URL must contain base64 data" };
+		}
+		const estimatedBytes = Math.floor((s.length - comma - 1) * 0.75);
+		const limit = maxImageBytes();
+		if (estimatedBytes > limit) {
+			return { error: `input_image exceeds PI_IMAGE_MAX_BYTES (${estimatedBytes} > ${limit})` };
+		}
+		return { url: s };
+	}
+	if (/^https?:\/\//i.test(s)) return { url: s };
 	// Local path. `/uploads/...` is served from ACB_UPLOADS_DIR.
 	let diskPath = s;
 	if (s.startsWith(OUTPUT_URL_PREFIX)) {
@@ -71,11 +85,19 @@ export function resolveInputImageUrl(input: string): { url: string } | { error: 
 		diskPath = join(uploadsDir, s.slice(OUTPUT_URL_PREFIX.length));
 	}
 	try {
-		if (!existsSync(diskPath)) return { error: `input_image not found: ${s}` };
-		const buf = readFileSync(diskPath);
+		const info = await stat(diskPath);
+		if (!info.isFile()) return { error: `input_image is not a regular file: ${s}` };
+		const limit = maxImageBytes();
+		if (info.size > limit) {
+			return { error: `input_image exceeds PI_IMAGE_MAX_BYTES (${info.size} > ${limit})` };
+		}
+		const buf = await readFile(diskPath);
 		const mt = sniffMimeType(diskPath);
 		return { url: `data:${mt};base64,${buf.toString("base64")}` };
 	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+			return { error: `input_image not found: ${s}` };
+		}
 		return {
 			error: `could not read input_image ${s}: ${err instanceof Error ? err.message : String(err)}`,
 		};
