@@ -4,19 +4,20 @@
   "description": "Shared core for the pi-*-image extensions: upload persistence, the unified image-model override file + source tagging, retrying image-API fetch, model resolution, the per-backend model catalogs, and provider auth/key resolution. Extracted from pi-venice-image / pi-openrouter-image / pi-openai-codex-image / pi-local-image so the four extensions stop copy-pasting (and pi-local-image stops mirroring) the same plumbing.",
   "keywords": ["pi-package", "image-generation"],
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./persist": "./src/persist.ts",
-    "./override": "./src/override.ts",
-    "./resolve": "./src/resolve.ts",
-    "./retry": "./src/retry.ts",
-    "./catalogs": "./src/catalogs.ts",
-    "./auth": "./src/auth.ts",
-    "./util": "./src/util.ts"
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./persist": { "types": "./dist/persist.d.ts", "default": "./dist/persist.js" },
+    "./override": { "types": "./dist/override.d.ts", "default": "./dist/override.js" },
+    "./resolve": { "types": "./dist/resolve.d.ts", "default": "./dist/resolve.js" },
+    "./retry": { "types": "./dist/retry.d.ts", "default": "./dist/retry.js" },
+    "./catalogs": { "types": "./dist/catalogs.d.ts", "default": "./dist/catalogs.js" },
+    "./auth": { "types": "./dist/auth.d.ts", "default": "./dist/auth.js" },
+    "./util": { "types": "./dist/util.d.ts", "default": "./dist/util.js" }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"
