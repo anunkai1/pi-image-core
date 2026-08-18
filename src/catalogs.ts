@@ -46,30 +46,22 @@ export const VENICE_IMAGE_MODELS: readonly ImageModelEntry[] = [
 ];
 
 /** ── OpenRouter (dedicated /images API) ───────────────────────────
- *  Hand-picked subset of `GET /api/v1/models?output_modalities=image`.
+ *  STATIC top-10 by weekly token usage, pinned 2026-08-18 from OpenRouter's
+ *  top-weekly ranking (the data behind https://openrouter.ai/models?order=top-weekly,
+ *  filtered to image-output models; openrouter/auto routing meta-models excluded).
  *  IDs carry a `vendor/` prefix (UNLIKE Venice/local bare ids). Every
  *  OpenRouter image model accepts image input (img2img). */
 export const OPENROUTER_IMAGE_MODELS: readonly ImageModelEntry[] = [
-	// Flagship / quality
-	{ id: "google/gemini-3-pro-image", name: "Gemini 3 Pro Image (Nano Banana Pro)", tags: ["google", "flagship"] },
-	{ id: "openai/gpt-image-2", name: "GPT Image 2", tags: ["openai", "flagship"] },
-	{ id: "x-ai/grok-imagine-image-quality", name: "Grok Imagine Quality", tags: ["grok", "quality"] },
-	{ id: "black-forest-labs/flux.2-max", name: "FLUX.2 Max", tags: ["flux", "flagship"] },
-	{ id: "microsoft/mai-image-2.5", name: "MAI Image 2.5", tags: ["microsoft"] },
-	{ id: "bytedance-seed/seedream-4.5", name: "Seedream 4.5", tags: ["seedream"] },
-	// Balanced
-	{ id: "google/gemini-3.1-flash-image", name: "Gemini 3.1 Flash Image", tags: ["google", "balanced"] },
 	{ id: "google/gemini-2.5-flash-image", name: "Nano Banana (Gemini 2.5 Flash Image)", tags: ["google", "balanced"] },
-	{ id: "openai/gpt-image-1", name: "GPT Image 1", tags: ["openai"] },
+	{ id: "bytedance-seed/seedream-4.5", name: "Seedream 4.5", tags: ["seedream"] },
+	{ id: "google/gemini-3.1-flash-image", name: "Nano Banana 2 (Gemini 3.1 Flash Image)", tags: ["google", "balanced"] },
+	{ id: "google/gemini-3.1-flash-image-preview", name: "Nano Banana 2 Preview (3.1 Flash Image)", tags: ["google", "preview"] },
+	{ id: "google/gemini-3.1-flash-lite-image", name: "Nano Banana 2 Lite (3.1 Flash Image)", tags: ["google", "cheap"] },
+	{ id: "openai/gpt-5.4-image-2", name: "GPT-5.4 Image 2", tags: ["openai", "new"] },
+	{ id: "google/gemini-3-pro-image", name: "Nano Banana Pro (Gemini 3 Pro Image)", tags: ["google", "flagship"] },
+	{ id: "openai/gpt-image-2", name: "GPT Image 2", tags: ["openai", "flagship"] },
+	{ id: "google/gemini-3-pro-image-preview", name: "Nano Banana Pro Preview (3 Pro Image)", tags: ["google", "flagship", "preview"] },
 	{ id: "black-forest-labs/flux.2-pro", name: "FLUX.2 Pro", tags: ["flux", "pro"] },
-	{ id: "black-forest-labs/flux.2-flex", name: "FLUX.2 Flex", tags: ["flux", "flex"] },
-	{ id: "recraft/recraft-v4.1-pro", name: "Recraft V4.1 Pro", tags: ["recraft", "typography"] },
-	// Cheap / fast
-	{ id: "google/gemini-3.1-flash-lite-image", name: "Gemini 3.1 Flash Lite Image", tags: ["google", "cheap"] },
-	{ id: "openai/gpt-image-1-mini", name: "GPT Image 1 Mini", tags: ["openai", "cheap"] },
-	{ id: "openai/gpt-5-image-mini", name: "GPT 5 Image Mini", tags: ["openai", "cheap"] },
-	{ id: "black-forest-labs/flux.2-klein-4b", name: "FLUX.2 Klein 4B", tags: ["flux", "klein", "cheap"] },
-	{ id: "sourceful/riverflow-v2.5-fast", name: "Riverflow V2.5 Fast", tags: ["sourceful", "fast"] },
 ];
 
 /** ── OpenAI Codex / ChatGPT OAuth ────────────────────────────────
