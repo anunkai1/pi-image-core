@@ -29,12 +29,14 @@ dependency (symlinked into its `node_modules` on `npm install`).
 Each extension keeps only its provider-specific bits: the endpoint URL,
 the response type, and a thin call wrapper.
 
-When `AGENTCHATBOX_MAX_UPLOAD_STORAGE_BYTES` is present, persistence serialises
-writers through `ACB_UPLOADS_DIR/.acb-upload-quota.lock`, counts every regular
-file (including ACB's sparse in-flight upload reservations), and rejects an
-image before decoding if publishing it would cross the aggregate quota. Output
-is written mode `0600` to a hidden staging file, synced, and atomically renamed.
-A dead writer's lock is reclaimed by PID liveness (with a five-minute malformed
-lock fallback). Outside ACB, the aggregate limit is disabled unless explicitly
-configured. The decoded per-image default is 25 MiB and can be changed through
-`PI_IMAGE_MAX_BYTES`.
+When `AGENTCHATBOX_MAX_UPLOAD_STORAGE_BYTES` is present, each writer first
+creates a unique mode-`0600` sparse reservation in `ACB_UPLOADS_DIR`, then
+counts every published file and browser/extension reservation. Because claims
+exist before scanning, independently running Pi and HTTP processes cannot both
+admit past the aggregate quota; a conservative tie can reject both rather than
+overrun it. Dead claims are reclaimed by owner-PID liveness without deleting a
+replacement writer's unique claim. An image is rejected before decoding if it
+would cross the quota. Output is written to a hidden staging file, synced, and
+atomically renamed before its reservation is removed. Outside ACB, the
+aggregate limit is disabled unless explicitly configured. The decoded
+per-image default is 25 MiB and can be changed through `PI_IMAGE_MAX_BYTES`.

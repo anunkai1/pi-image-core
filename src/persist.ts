@@ -5,27 +5,15 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import {
-	mkdir,
-	open,
-	readdir,
-	readFile,
-	rename,
-	rm,
-	stat,
-	unlink,
-	writeFile,
-} from "node:fs/promises";
+import { open, readdir, rename, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 export const OUTPUT_URL_PREFIX = "/uploads/";
 export const DEFAULT_MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 export const UPLOAD_STORAGE_LIMIT_ENV = "AGENTCHATBOX_MAX_UPLOAD_STORAGE_BYTES";
-export const UPLOAD_QUOTA_LOCK_DIR = ".acb-upload-quota.lock";
+export const UPLOAD_RESERVATION_PREFIX = ".acb-upload-reservation-";
 const BASE64_CHUNK_CHARS = 1024 * 1024; // divisible by four
-const LOCK_RETRY_MS = 25;
-const LOCK_MAX_ATTEMPTS = 400;
-const LOCK_STALE_MS = 5 * 60_000;
+let localQuotaTail: Promise<void> = Promise.resolve();
 
 export function maxImageBytes(): number {
 	const configured = Number.parseInt(process.env.PI_IMAGE_MAX_BYTES ?? "", 10);
@@ -76,86 +64,61 @@ export class UploadStorageQuotaError extends RangeError {
 	}
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+function reservationOwner(name: string): number | null {
+	const match = name.match(/^\.acb-upload-reservation-(\d+)-/);
+	if (!match) return null;
+	const pid = Number(match[1]);
+	return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
 }
 
-async function ownerIsGone(lockDir: string): Promise<boolean> {
+function processIsGone(pid: number): boolean {
 	try {
-		const owner = JSON.parse(
-			await readFile(join(lockDir, "owner.json"), "utf8"),
-		) as {
-			pid?: unknown;
-			createdAt?: unknown;
-		};
-		if (
-			typeof owner.pid === "number" &&
-			Number.isSafeInteger(owner.pid) &&
-			owner.pid > 0
-		) {
-			try {
-				process.kill(owner.pid, 0);
-				return false;
-			} catch (error) {
-				return (error as NodeJS.ErrnoException).code === "ESRCH";
-			}
-		}
-	} catch {
-		/* owner may not have been written yet */
-	}
-	try {
-		return Date.now() - (await stat(lockDir)).mtimeMs > LOCK_STALE_MS;
-	} catch {
-		return true;
+		process.kill(pid, 0);
+		return false;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ESRCH";
 	}
 }
 
-async function acquireUploadQuotaLock(
-	outputDir: string,
-): Promise<() => Promise<void>> {
-	const lockDir = join(outputDir, UPLOAD_QUOTA_LOCK_DIR);
-	for (let attempt = 0; attempt < LOCK_MAX_ATTEMPTS; attempt++) {
-		try {
-			await mkdir(lockDir, { mode: 0o700 });
-			try {
-				await writeFile(
-					join(lockDir, "owner.json"),
-					JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
-					{ mode: 0o600, flag: "wx" },
-				);
-			} catch (error) {
-				await rm(lockDir, { recursive: true, force: true });
-				throw error;
-			}
-			return async () => rm(lockDir, { recursive: true, force: true });
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			if (await ownerIsGone(lockDir)) {
-				await rm(lockDir, { recursive: true, force: true });
-				continue;
-			}
-			await sleep(LOCK_RETRY_MS);
-		}
-	}
-	throw new Error("timed out waiting for the upload storage quota lock");
-}
-
-export async function uploadStorageUsageBytes(
-	outputDir: string,
-): Promise<number> {
-	let total = 0;
+async function removeDeadReservations(outputDir: string): Promise<void> {
 	for (const entry of await readdir(outputDir, { withFileTypes: true })) {
 		if (!entry.isFile()) continue;
-		try {
-			total += (await stat(join(outputDir, entry.name))).size;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		const pid = reservationOwner(entry.name);
+		if (pid !== null && processIsGone(pid)) {
+			// Unique reservation names are never reused, so removing this exact
+			// dead claim cannot delete another writer's replacement claim.
+			await unlink(join(outputDir, entry.name)).catch((error: NodeJS.ErrnoException) => {
+				if (error.code !== "ENOENT") throw error;
+			});
 		}
 	}
-	return total;
 }
 
-/** Serialize extension writers and reserve against ACB's aggregate quota. */
+export async function uploadStorageUsageBytes(outputDir: string): Promise<number> {
+	// Publication renames staging to a target before dropping its reservation.
+	// Retry if an entry disappears between readdir and stat so a transition can
+	// never make us miss both the old claim and its replacement output.
+	for (let attempt = 0; attempt < 10; attempt++) {
+		let total = 0;
+		let changed = false;
+		for (const entry of await readdir(outputDir, { withFileTypes: true })) {
+			if (!entry.isFile()) continue;
+			// Staging bytes are already represented by an exact-size reservation.
+			if (entry.name.startsWith(".") && entry.name.endsWith(".part")) continue;
+			try {
+				total += (await stat(join(outputDir, entry.name))).size;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				changed = true;
+				break;
+			}
+		}
+		if (!changed) return total;
+	}
+	throw new Error("upload directory changed too quickly to calculate quota safely");
+}
+
+/** Atomically claim capacity before decoding, without a stale-lock recovery race. */
 async function withUploadStorageQuota<T>(
 	outputDir: string,
 	requiredBytes: number,
@@ -163,15 +126,54 @@ async function withUploadStorageQuota<T>(
 ): Promise<T> {
 	const quotaBytes = maxUploadStorageBytes();
 	if (quotaBytes === null) return operation();
-	const release = await acquireUploadQuotaLock(outputDir);
+	// Preserve useful one-winner behaviour for concurrent outputs in this pi
+	// process. Independent processes still coordinate through reservations.
+	const previous = localQuotaTail;
+	let releaseLocal!: () => void;
+	localQuotaTail = new Promise<void>((resolve) => {
+		releaseLocal = resolve;
+	});
+	await previous;
+	let reservation: string | null = null;
 	try {
-		const usedBytes = await uploadStorageUsageBytes(outputDir);
-		if (usedBytes + requiredBytes > quotaBytes) {
-			throw new UploadStorageQuotaError(usedBytes, requiredBytes, quotaBytes);
+		await removeDeadReservations(outputDir);
+		reservation = join(
+			outputDir,
+			`${UPLOAD_RESERVATION_PREFIX}${process.pid}-${randomUUID()}`,
+		);
+		const handle = await open(reservation, "wx", 0o600);
+		let prepareError: unknown;
+		try {
+			await handle.truncate(requiredBytes);
+		} catch (error) {
+			prepareError = error;
+		}
+		try {
+			await handle.close();
+		} catch (error) {
+			prepareError ??= error;
+		}
+		if (prepareError) throw prepareError;
+
+		const allocatedBytes = await uploadStorageUsageBytes(outputDir);
+		if (allocatedBytes > quotaBytes) {
+			throw new UploadStorageQuotaError(
+				allocatedBytes - requiredBytes,
+				requiredBytes,
+				quotaBytes,
+			);
 		}
 		return await operation();
 	} finally {
-		await release();
+		try {
+			if (reservation) {
+				await unlink(reservation).catch((error: NodeJS.ErrnoException) => {
+					if (error.code !== "ENOENT") throw error;
+				});
+			}
+		} finally {
+			releaseLocal();
+		}
 	}
 }
 

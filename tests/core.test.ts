@@ -14,7 +14,7 @@ import {
 	resolveModel,
 	resolveOutputDir,
 	tagImageModelId,
-	UPLOAD_QUOTA_LOCK_DIR,
+	UPLOAD_RESERVATION_PREFIX,
 	untagImageModelId,
 	writeBase64,
 } from "../src/index.js";
@@ -107,7 +107,22 @@ describe("writeBase64 + persistImage", () => {
 		expect(await readdir(dir)).toEqual(["existing.bin"]);
 		await rm(dir, { recursive: true, force: true });
 	});
-	it("serializes concurrent extension writes so only quota-fitting images publish", async () => {
+	it("counts a live browser-upload reservation before decoding", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "out-"));
+		await writeFile(
+			join(dir, `${UPLOAD_RESERVATION_PREFIX}${process.pid}-browser`),
+			Buffer.alloc(6),
+		);
+		process.env.AGENTCHATBOX_MAX_UPLOAD_STORAGE_BYTES = "10";
+		await expect(writeBase64("aGVsbG8=", dir, "png")).rejects.toThrow(
+			/upload storage quota exceeded/,
+		);
+		expect(await readdir(dir)).toEqual([
+			`${UPLOAD_RESERVATION_PREFIX}${process.pid}-browser`,
+		]);
+		await rm(dir, { recursive: true, force: true });
+	});
+	it("reserves concurrent extension writes so only quota-fitting images publish", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "out-"));
 		process.env.AGENTCHATBOX_MAX_UPLOAD_STORAGE_BYTES = "9";
 		const results = await Promise.allSettled([
@@ -125,18 +140,17 @@ describe("writeBase64 + persistImage", () => {
 		expect(names[0]).toMatch(/\.png$/);
 		await rm(dir, { recursive: true, force: true });
 	});
-	it("recovers a quota lock left by a dead writer", async () => {
+	it("recovers a unique reservation left by a dead writer", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "out-"));
-		const lock = join(dir, UPLOAD_QUOTA_LOCK_DIR);
-		await mkdir(lock);
-		await writeFile(
-			join(lock, "owner.json"),
-			JSON.stringify({ pid: 2_147_483_647 }),
+		const reservation = join(
+			dir,
+			`${UPLOAD_RESERVATION_PREFIX}2147483647-dead-writer`,
 		);
+		await writeFile(reservation, Buffer.alloc(10));
 		process.env.AGENTCHATBOX_MAX_UPLOAD_STORAGE_BYTES = "10";
 		expect(await writeBase64("aGVsbG8=", dir, "png")).toMatch(/^\/uploads\//);
 		expect(
-			(await readdir(dir)).some((name) => name === UPLOAD_QUOTA_LOCK_DIR),
+			(await readdir(dir)).some((name) => name.startsWith(UPLOAD_RESERVATION_PREFIX)),
 		).toBe(false);
 		await rm(dir, { recursive: true, force: true });
 	});
