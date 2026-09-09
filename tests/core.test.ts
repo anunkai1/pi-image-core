@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	DEFAULT_MAX_IMAGE_BYTES,
+	VENICE_IMAGE_MODELS,
 	extFromMediaType,
 	extFromOutputFormat,
 	formatCost,
@@ -172,6 +173,12 @@ describe("source tagging", () => {
 		expect(imageModelSourceFor("flux-2-klein-int8")).toBe("local");
 		expect(imageModelSourceFor("z-image-turbo")).toBe("local"); // local wins over venice
 		expect(imageModelSourceFor("flux-2-max")).toBe("venice");
+		expect(VENICE_IMAGE_MODELS).toContainEqual({
+			id: "muse-image",
+			name: "Muse Image",
+			tags: ["muse", "creative"],
+		});
+		expect(imageModelSourceFor("muse-image")).toBe("venice");
 		expect(imageModelSourceFor("google/gemini-3-pro-image")).toBe("openrouter");
 		expect(imageModelSourceFor("gpt-image-2")).toBe("openai-codex"); // codex catalog has it
 		expect(imageModelSourceFor("some-unknown-model")).toBe("venice"); // legacy default

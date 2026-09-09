@@ -36,6 +36,7 @@ export const VENICE_IMAGE_MODELS: readonly ImageModelEntry[] = [
 	{ id: "nano-banana-2", name: "Nano Banana 2", tags: ["google"] },
 	{ id: "nano-banana-2-lite", name: "Nano Banana 2 Lite", tags: ["google", "lite", "cheap"] },
 	{ id: "ideogram-v4", name: "Ideogram V4", tags: ["ideogram", "typography"] },
+	{ id: "muse-image", name: "Muse Image", tags: ["muse", "creative"] },
 	{ id: "qwen-image-2-pro", name: "Qwen Image 2 Pro", tags: ["qwen", "pro"] },
 	{ id: "qwen-image-2", name: "Qwen Image 2", tags: ["qwen"] },
 	{ id: "qwen-image", name: "Qwen Image", tags: ["qwen", "kidstories"] },
