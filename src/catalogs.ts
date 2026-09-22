@@ -83,6 +83,9 @@ export interface LocalModelEntry extends ImageModelEntry {
 export const LOCAL_MODELS: readonly LocalModelEntry[] = [
 	{ id: "flux-2-klein-int8", name: "FLUX.2 Klein 4B int8", port: 8012, tags: ["flux", "klein", "int8", "fast", "default"] },
 	{ id: "z-image-turbo", name: "Z-Image-Turbo", port: 8010, tags: ["z-image", "turbo", "kidstories"] },
+	// Qwen-Image-2.1 is a guarded CLI rather than an HTTP service; port 0
+	// tells the local extension not to look for a zimage-server endpoint.
+	{ id: "qwen-image-2.1-local", name: "Qwen Image 2.1 (local, uncensored)", port: 0, tags: ["qwen", "local", "uncensored", "1024px"] },
 ];
 
 // ── Classifiers ────────────────────────────────────────────────────
