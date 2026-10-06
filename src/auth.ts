@@ -72,25 +72,6 @@ function readAuthEntry(provider: string): string | undefined {
 	}
 }
 
-/** Sync read of the Codex OAuth entry (no refresh). Used where the caller
- *  only needs presence, not a guaranteed-fresh token. */
-export function getOpenAICodexAuthSync(): OpenAICodexAuth | undefined {
-	try {
-		const file = authFilePath();
-		if (!existsSync(file)) return undefined;
-		const auth = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
-		const entry = auth["openai-codex"] as Record<string, unknown> | undefined;
-		const access = typeof entry?.access === "string" ? entry.access : undefined;
-		if (!access) return undefined;
-		return {
-			access,
-			accountId: typeof entry?.accountId === "string" ? entry.accountId : undefined,
-		};
-	} catch {
-		return undefined;
-	}
-}
-
 /**
  * Resolve/refresh the Codex OAuth token. Refreshes when expiry is within 60s.
  * Persists refreshed access/refresh/expires back to auth.json (the same file
