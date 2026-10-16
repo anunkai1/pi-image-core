@@ -23,7 +23,7 @@ dependency (symlinked into its `node_modules` on `npm install`).
 | `resolve` | parameterized `resolveModel({ ownPrefix, envVar, defaultModel })` |
 | `retry` | `sleep`, `withTimeout`, and a generic retrying `callImageApi` |
 | `catalogs` | the Venice / OpenRouter / OpenRouter / Codex / Local model lists + `is*Model` classifiers |
-| `auth` | `getVeniceKey`, `getOpenRouterKey`, `getOpenAICodexAuth` (with refresh) |
+| `auth` | `getVeniceKey`, `getOpenRouterKey`, `getOpenAICodexAuth` (Pi's `openai-codex` login, falling back to the existing Codex CLI login; refreshes in the original store without duplicating rotating tokens) |
 | `util` | `formatCost`, `extFromMediaType`, `extFromOutputFormat`, `resolveInputImageUrl`, `sniffMimeType` |
 
 Each extension keeps only its provider-specific bits: the endpoint URL,

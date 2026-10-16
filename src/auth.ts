@@ -76,18 +76,18 @@ function readAuthEntry(provider: string): string | undefined {
  * Resolve/refresh the Codex OAuth token. Refreshes when expiry is within 60s.
  * Persists refreshed access/refresh/expires back to auth.json (the same file
  * pi uses) so future sessions benefit. Returns undefined if no token is
- * configured.
+ * configured in either pi or the Codex CLI's original auth store.
  */
 export async function getOpenAICodexAuth(): Promise<OpenAICodexAuth | undefined> {
 	const initial = codexEntry(readAuthFile());
-	if (!initial) return undefined;
+	if (!initial) return getCodexCliAuth();
 	if (!initial.refresh || (initial.expires ?? 0) > Date.now() + 60_000) return initial;
 
 	// Refresh tokens rotate. Serialize the re-check + network refresh + merge
 	// across every pi process using the same auth store, not merely this Node
 	// instance. The second waiter observes the first waiter's fresh token and
 	// avoids issuing a now-invalid duplicate refresh.
-	return withAuthFileLock(async () => {
+	return withAuthFileLock(authFilePath(), async () => {
 		const latest = codexEntry(readAuthFile());
 		if (!latest) return undefined;
 		if (!latest.refresh || (latest.expires ?? 0) > Date.now() + 60_000) return latest;
@@ -120,9 +120,65 @@ function codexEntry(auth: Record<string, unknown> | null): OpenAICodexAuth | und
 	};
 }
 
-function readAuthFile(): Record<string, unknown> | null {
+/** The Codex CLI owns a different JSON shape. Read its current credentials
+ * on every call rather than copying rotating refresh tokens into pi's store. */
+function codexCliAuthFilePath(): string {
+	return join(process.env.CODEX_HOME ?? join(process.env.HOME ?? homedir(), ".codex"), "auth.json");
+}
+
+function codexCliEntry(auth: Record<string, unknown> | null): OpenAICodexAuth | undefined {
+	// Never treat a Platform API-key login as a subscription login.
+	if (auth?.auth_mode === "apikey") return undefined;
+	const tokens = auth?.tokens as Record<string, unknown> | undefined;
+	if (!tokens || typeof tokens.access_token !== "string" || !tokens.access_token) return undefined;
+	let expires: number;
 	try {
-		const file = authFilePath();
+		const payload = JSON.parse(Buffer.from(tokens.access_token.split(".")[1], "base64url").toString("utf8"));
+		if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) return undefined;
+		expires = payload.exp * 1000;
+	} catch {
+		return undefined;
+	}
+	return {
+		access: tokens.access_token,
+		refresh: typeof tokens.refresh_token === "string" ? tokens.refresh_token : undefined,
+		expires,
+		accountId: typeof tokens.account_id === "string" ? tokens.account_id : undefined,
+	};
+}
+
+async function getCodexCliAuth(): Promise<OpenAICodexAuth | undefined> {
+	const file = codexCliAuthFilePath();
+	const initial = codexCliEntry(readAuthFile(file));
+	if (!initial) return undefined;
+	if ((initial.expires ?? 0) > Date.now() + 60_000) return initial;
+	if (!initial.refresh) throw new Error("Codex CLI login expired; run `codex login` again.");
+	return withAuthFileLock(file, async () => {
+		const latest = codexCliEntry(readAuthFile(file));
+		if (!latest) return undefined;
+		if ((latest.expires ?? 0) > Date.now() + 60_000) return latest;
+		if (!latest.refresh) throw new Error("Codex CLI login expired; run `codex login` again.");
+		const refreshed = await refreshOpenAICodexAuth(latest.refresh);
+		const current = readAuthFile(file);
+		if (!current) throw new Error("Codex CLI auth disappeared during refresh");
+		// A CLI login/refresh may have replaced the credential during our fetch.
+		// Do not overwrite that newer login with our older in-flight result.
+		if ((current.tokens as Record<string, unknown> | undefined)?.refresh_token !== latest.refresh) {
+			return codexCliEntry(current);
+		}
+		current.tokens = {
+			...(current.tokens as Record<string, unknown>),
+			access_token: refreshed.access,
+			refresh_token: refreshed.refresh,
+		};
+		current.last_refresh = new Date().toISOString();
+		writeAuthFile(current, file);
+		return { ...refreshed, accountId: latest.accountId };
+	});
+}
+
+function readAuthFile(file = authFilePath()): Record<string, unknown> | null {
+	try {
 		if (!existsSync(file)) return null;
 		return JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
 	} catch {
@@ -133,8 +189,8 @@ function readAuthFile(): Record<string, unknown> | null {
 const AUTH_LOCK_STALE_MS = 2 * 60_000;
 const AUTH_LOCK_WAIT_MS = 30_000;
 
-async function withAuthFileLock<T>(fn: () => Promise<T>): Promise<T> {
-	const target = realpathSync(authFilePath());
+async function withAuthFileLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
+	const target = realpathSync(file);
 	const lockDir = `${target}.refresh-lock`;
 	const deadline = Date.now() + AUTH_LOCK_WAIT_MS;
 	while (true) {
@@ -163,11 +219,11 @@ async function withAuthFileLock<T>(fn: () => Promise<T>): Promise<T> {
 	}
 }
 
-function writeAuthFile(auth: Record<string, unknown>): void {
+function writeAuthFile(auth: Record<string, unknown>, path = authFilePath()): void {
 	// auth.json is a symlink into the central secrets store on server2. Resolve
 	// it before atomic replacement so token refresh never replaces that symlink
 	// with a local, accidentally less-protected copy.
-	const file = realpathSync(authFilePath());
+	const file = realpathSync(path);
 	mkdirSync(dirname(file), { recursive: true });
 	const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
 	try {
@@ -191,8 +247,7 @@ async function refreshOpenAICodexAuth(
 		}),
 	});
 	if (!res.ok) {
-		const text = await res.text().catch(() => "");
-		throw new Error(`OpenAI Codex token refresh failed (${res.status}): ${text.slice(0, 500)}`);
+		throw new Error(`OpenAI Codex token refresh failed (${res.status}); reconnect the Codex login.`);
 	}
 	const json = (await res.json()) as Record<string, unknown>;
 	if (
@@ -200,9 +255,7 @@ async function refreshOpenAICodexAuth(
 		typeof json.refresh_token !== "string" ||
 		typeof json.expires_in !== "number"
 	) {
-		throw new Error(
-			`OpenAI Codex token refresh response missing fields: ${JSON.stringify(json).slice(0, 500)}`,
-		);
+		throw new Error("OpenAI Codex token refresh response missing required fields");
 	}
 	return {
 		access: json.access_token,
