@@ -54,12 +54,9 @@ export interface CallImageApiOptions {
 	maxRetries: number;
 	/** Base delay (ms) for exponential backoff: 500ms, 1s, 2s, … Default 500. */
 	backoffBaseMs?: number;
-	/** Retry on a thrown fetch error (network/timeout)? Default false. The
-	 *  local GPU server sets this true (a restart looks like a network error
-	 *  that clears); the cloud backends surface immediately. */
+	/** Retry on a thrown fetch error (network/timeout)? Default false. */
 	retryNetworkErrors?: boolean;
-	/** Which HTTP statuses are retryable. Default: 429 or >= 500. The local
-	 *  server also retries 409 (wrong-instance, mid-zimage-switch). */
+	/** Which HTTP statuses are retryable. Default: 429 or >= 500. */
 	isRetryableStatus?: (status: number) => boolean;
 	/** Turn a non-OK response body into a human-readable error message. */
 	extractError: (body: unknown, status: number) => string;

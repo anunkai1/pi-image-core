@@ -170,8 +170,7 @@ describe("resolveOutputDir", () => {
 
 describe("source tagging", () => {
 	it("classifies a known id into its backend", () => {
-		expect(imageModelSourceFor("flux-2-klein-int8")).toBe("local");
-		expect(imageModelSourceFor("z-image-turbo")).toBe("local"); // local wins over venice
+		expect(imageModelSourceFor("z-image-turbo")).toBe("venice"); // cloud catalogue only
 		expect(imageModelSourceFor("qwen-image-2.1-local")).toBe("local");
 		expect(imageModelSourceFor("flux-2-max")).toBe("venice");
 		expect(VENICE_IMAGE_MODELS).toContainEqual({
@@ -185,9 +184,6 @@ describe("source tagging", () => {
 		expect(imageModelSourceFor("some-unknown-model")).toBe("venice"); // legacy default
 	});
 	it("tags a bare id using the classifier", () => {
-		expect(tagImageModelId("flux-2-klein-int8", imageModelSourceFor)).toBe(
-			"local/flux-2-klein-int8",
-		);
 		expect(tagImageModelId("qwen-image-2.1-local", imageModelSourceFor)).toBe(
 			"local/qwen-image-2.1-local",
 		);
@@ -201,12 +197,12 @@ describe("source tagging", () => {
 	});
 	it("is idempotent — already-tagged ids pass through", () => {
 		expect(
-			tagImageModelId("local/flux-2-klein-int8", imageModelSourceFor),
-		).toBe("local/flux-2-klein-int8");
+			tagImageModelId("local/qwen-image-2.1-local", imageModelSourceFor),
+		).toBe("local/qwen-image-2.1-local");
 	});
 	it("untags by splitting on the FIRST slash", () => {
-		expect(untagImageModelId("local/flux-2-klein-int8")).toBe(
-			"flux-2-klein-int8",
+		expect(untagImageModelId("local/qwen-image-2.1-local")).toBe(
+			"qwen-image-2.1-local",
 		);
 		expect(untagImageModelId("openrouter/google/gemini-3-pro-image")).toBe(
 			"google/gemini-3-pro-image",
@@ -240,7 +236,7 @@ describe("resolveModel (parameterized)", () => {
 	it("falls through on another backend's tag", async () => {
 		const file = join(tmpHome, ".config", "acb", "image-model");
 		await mkdir(join(tmpHome, ".config", "acb"), { recursive: true });
-		await writeFile(file, "local/flux-2-klein-int8\n");
+		await writeFile(file, "local/qwen-image-2.1-local\n");
 		expect(resolveModel(opts)).toBe("z-image-turbo"); // default, not the local id
 	});
 	it("passes a bare legacy id through unchanged", async () => {

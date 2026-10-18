@@ -72,26 +72,18 @@ export const OPENAI_CODEX_IMAGE_MODELS: readonly ImageModelEntry[] = [
 	{ id: "gpt-image-2", name: "GPT Image 2 (Codex/ChatGPT OAuth)", tags: ["openai", "codex", "oauth"] },
 ];
 
-/** ── Local GPU (server4 zimage-server) ───────────────────────────
- *  Each model maps to a zimage-server instance + tunnel port on server4.
- *  `port` is 0 for the non-local catalogs (so the unified picker can treat
- *  all lists uniformly); only the local catalog carries real ports. */
+/** Local GPU catalogue. Port 0 denotes guarded one-shot CLI generation. */
 export interface LocalModelEntry extends ImageModelEntry {
 	port: number;
 }
 
 export const LOCAL_MODELS: readonly LocalModelEntry[] = [
-	{ id: "flux-2-klein-int8", name: "FLUX.2 Klein 4B int8", port: 8012, tags: ["flux", "klein", "int8", "fast", "default"] },
-	{ id: "z-image-turbo", name: "Z-Image-Turbo", port: 8010, tags: ["z-image", "turbo", "kidstories"] },
-	// Qwen-Image-2.1 is a guarded CLI rather than an HTTP service; port 0
-	// tells the local extension not to look for a zimage-server endpoint.
 	{ id: "qwen-image-2.1-local", name: "Qwen Image 2.1 (local, uncensored)", port: 0, tags: ["qwen", "local", "uncensored", "1024px"] },
 ];
 
 // ── Classifiers ────────────────────────────────────────────────────
 
-/** z-image-turbo counts as LOCAL (the GPU serves it free; routing it to the
- *  Venice cloud API would waste budget), even though it's also a Venice id. */
+/** Only models installed on Server4 are classified as local. */
 export function isLocalModel(id: string): boolean {
 	return LOCAL_MODELS.some((m) => m.id === id);
 }
@@ -108,10 +100,8 @@ export function isOpenAICodexModel(id: string): boolean {
 /**
  * Classify a bare model id into its backend. Used by the override-file
  * tagger (override.ts tagImageModelId) so the shared file carries correct
- * origin info. Order matters: local is checked before Venice because
- * `z-image-turbo` is in BOTH catalogs but should tag `local/`. OpenRouter
- * ids are vendor-prefixed (contain `/`), so they never collide with the
- * bare Venice/local ids. Unknown ids default to `venice` (legacy).
+ * origin info. OpenRouter ids are vendor-prefixed (contain `/`), so they
+ * never collide with the bare Venice/local ids. Unknown ids default to `venice` (legacy).
  */
 export function imageModelSourceFor(id: string): ImageSource {
 	if (isLocalModel(id)) return "local";
