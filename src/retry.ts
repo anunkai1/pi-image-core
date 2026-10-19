@@ -2,19 +2,16 @@
  * Retry primitives for image-API calls.
  *
  * `sleep` + `withTimeout` were byte-for-byte identical in all four
- * extensions; `callImageApi` collapses the four near-identical
+ * extensions; `callImageApi` collapses the near-identical cloud
  * timeout + retry-on-429/5xx POST loops (callVeniceImage /
- * callOpenRouterImage / callOpenAICodexImage / callLocalImage) into one
- * parameterized helper. Behavior is preserved exactly:
+ * callOpenRouterImage / callOpenAICodexImage) into one helper:
  *
  *   - caller abort (signal) always propagates immediately, including
  *     mid-backoff
  *   - a hard per-attempt timeout via AbortSignal.timeout, combined with the
  *     caller's signal via AbortSignal.any
  *   - retries 429 + 5xx with exponential backoff (500ms → 1s → 2s, …)
- *   - network errors are NOT retried by default (a hang retried is still a
- *     hang) — set `retryNetworkErrors` for the local GPU server, where a
- *     network error often means the server is mid-restart and will recover
+ *   - network errors are NOT retried (a hang retried is still a hang)
  */
 
 /** Sleep that aborts early if the caller signal fires, so cancelling a
@@ -52,12 +49,6 @@ export interface CallImageApiOptions {
 	signal: AbortSignal | undefined;
 	timeoutMs: number;
 	maxRetries: number;
-	/** Base delay (ms) for exponential backoff: 500ms, 1s, 2s, … Default 500. */
-	backoffBaseMs?: number;
-	/** Retry on a thrown fetch error (network/timeout)? Default false. */
-	retryNetworkErrors?: boolean;
-	/** Which HTTP statuses are retryable. Default: 429 or >= 500. */
-	isRetryableStatus?: (status: number) => boolean;
 	/** Turn a non-OK response body into a human-readable error message. */
 	extractError: (body: unknown, status: number) => string;
 	/** Label for the thrown network-error message, e.g. "Venice image". */
@@ -77,9 +68,6 @@ export async function callImageApi<T>(opts: CallImageApiOptions): Promise<T> {
 		signal,
 		timeoutMs,
 		maxRetries,
-		backoffBaseMs = 500,
-		retryNetworkErrors = false,
-		isRetryableStatus = (status) => status === 429 || status >= 500,
 		extractError,
 		label,
 	} = opts;
@@ -95,18 +83,12 @@ export async function callImageApi<T>(opts: CallImageApiOptions): Promise<T> {
 				signal: withTimeout(signal, timeoutMs),
 			});
 		} catch (err) {
-			// Caller cancel: propagate without retry.
+			// Caller cancel propagates as-is; network/timeout errors surface
+			// immediately without retry.
 			if (signal?.aborted) throw err;
-			lastError = new Error(
+			throw new Error(
 				`${label} request failed: ${err instanceof Error ? err.message : String(err)}`,
 			);
-			// Network/timeout error: surface immediately unless the caller opted
-			// into retrying it (local server mid-restart).
-			if (retryNetworkErrors && attempt < maxRetries) {
-				await sleep(backoffBaseMs * 2 ** attempt, signal);
-				continue;
-			}
-			throw lastError;
 		}
 
 		if (res.ok) return (await res.json()) as T;
@@ -119,8 +101,8 @@ export async function callImageApi<T>(opts: CallImageApiOptions): Promise<T> {
 			/* keep as raw text */
 		}
 		lastError = new Error(extractError(parsed, res.status));
-		if (isRetryableStatus(res.status) && attempt < maxRetries) {
-			await sleep(backoffBaseMs * 2 ** attempt, signal);
+		if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+			await sleep(500 * 2 ** attempt, signal);
 			continue;
 		}
 		throw lastError;
