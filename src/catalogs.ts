@@ -78,7 +78,7 @@ export interface LocalModelEntry extends ImageModelEntry {
 }
 
 export const LOCAL_MODELS: readonly LocalModelEntry[] = [
-	{ id: "qwen-image-2.1-local", name: "Qwen Image 2.1 (local, uncensored)", port: 0, tags: ["qwen", "local", "uncensored", "1024px"] },
+	{ id: "qwen-image-2.1-local", name: "Qwen Image 2.1 Turbo", port: 0, tags: ["qwen", "local", "uncensored", "1024px"] },
 ];
 
 // ── Classifiers ────────────────────────────────────────────────────
